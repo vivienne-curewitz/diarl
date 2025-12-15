@@ -4,7 +4,7 @@ import math
 from time import perf_counter
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from random import randint
+from random import randint, random
 
 
 import torch
@@ -29,7 +29,6 @@ class RLPolicy(nn.Module):
     def forward(self, state):
         raw = self.net(state)
         return raw
-        # return F.normalize(raw, dim=-1)
         
 
 class RLValue(nn.Module):
@@ -49,6 +48,14 @@ class RLValue(nn.Module):
         return self.net(state)
 
 
+def rand_unit_cirlce_pos(coords, distance):
+    x, y = coords
+    theta = random()*2*math.pi
+    sx = distance*math.cos(theta) + x
+    sy = distance*math.sin(theta) + y
+    return (sx, sy)
+
+
 def train_loop(data_queue: Queue):
     agent = RLPolicy()
     critic = RLValue()
@@ -56,6 +63,8 @@ def train_loop(data_queue: Queue):
     value_opt = torch.optim.Adam(critic.parameters(), lr=1e-3)
     total_steps = 0
     epoch = 0    
+    last_n = np.zeros((100,)).tolist() 
+    current_start_dist = 5
     try:
         checkpoint = torch.load("checkpoint.pt")
         agent.load_state_dict(checkpoint["policy_state_dict"])
@@ -71,18 +80,26 @@ def train_loop(data_queue: Queue):
         total_reward = 0
         start = perf_counter()
         tx, ty = (50, 50) # (randint(10, 90), randint(10, 90)) #target position
-        cx, cy = (randint(40, 60), randint(40, 60)) # current position
+        cx, cy = rand_unit_cirlce_pos((tx, ty), current_start_dist) # current position
         rf = env_sim("../dia-homeworks/project/models/data", (tx, ty), (cx, cy))
         state_vec = rf.get_env() 
         succeed = False
         sigma = 0.05
+        gamma = 0.001
         for i in range(2000):
             #loop
             state = torch.tensor(state_vec, dtype=torch.float32)
 
-            action = agent(state)
-            action += sigma * torch.randn_like(action)
+            # action = agent(state)
+            # action += sigma * torch.randn_like(action)
+            # action = F.normalize(action, dim=-1)
+
+            mu = agent(state)
+            dist = torch.distributions.Normal(mu, sigma)
+            action = dist.sample()
             action = F.normalize(action, dim=-1)
+            log_prob = dist.log_prob(action).sum()
+
             dx, dy = action.detach().numpy()
 
             # Apply action in environment
@@ -95,12 +112,12 @@ def train_loop(data_queue: Queue):
             state_vec = next_state
             reward = torch.tensor(reward, dtype=torch.float32)
             value = critic(state)
+            next_value = critic(torch.tensor(next_state, dtype=torch.float32)).detach()
 
-            # Advantage
-            advantage = reward - value
+            advantage = reward + gamma * next_value - value
 
             # --- Policy update ---
-            policy_loss = -advantage.detach() * torch.sum(action)
+            policy_loss = -log_prob * advantage.detach()
             policy_opt.zero_grad()
             policy_loss.backward()
             policy_opt.step()
@@ -114,8 +131,16 @@ def train_loop(data_queue: Queue):
         rt = perf_counter() - start
         total_steps += i
         cx, cy = rf.cpos
-        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s {'Success!!' if succeed else 'Fail'}")
+        if succeed:
+            last_n[epoch%100] = 1
+        else:
+            last_n[epoch%100] = 0
+        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s Win Rate {sum(last_n)}% Spawn Distance {current_start_dist}")
         data_queue.put((rf.all_previous_positions, (tx, ty)))
+        win_rate = sum(last_n)/100
+        if win_rate*100 > 90.0:
+            current_start_dist += 1 
+            last_n = np.zeros((100,)).tolist()
         if epoch % 10 == 0:
             torch.save({
                 "policy_state_dict": agent.state_dict(),
@@ -176,71 +201,11 @@ def run_train_and_view_procesess():
     ani = animation.FuncAnimation(fig, update, interval=100, blit=True, cache_frame_data=False)
     plt.show()
 
-    # # Initialize the plot once
-    # plt.ion()  # Turn on interactive mode
-    # fig, ax = plt.subplots()
-    # line, = ax.plot([], [], linewidth=2)
-    # start_point = ax.scatter([], [], c='blue', label='start', s=100)
-    # end_point = ax.scatter([], [], c='red', label='end', s=100)
-    # target = ax.scatter([target[0]], [target[1]], c="pink", marker="x")
-    # ax.set_ylim(0, 100)
-    # ax.set_xlim(0, 100)
-    # ax.axis('equal')
-    # ax.legend()
-    # ax.set_title("Agent Path")
-    
-    # while True:
-    #     try:
-    #         app = dq.get(timeout=10)  # Add timeout to avoid hanging indefinitely
-            
-    #         if app:  # Check if data is not empty
-    #             # Unpack positions
-    #             positions = app
-    #             if positions and len(positions) > 0:
-    #                 xs, ys = zip(*positions)
-                    
-    #                 # Update plot data
-    #                 line.set_data(xs, ys)
-                    
-    #                 # Update start and end points
-    #                 if len(xs) > 0:
-    #                     start_point.set_offsets([[xs[0], ys[0]]])
-    #                     end_point.set_offsets([[xs[-1], ys[-1]]])
-                    
-    #                 # Adjust axis limits to fit the data
-    #                 # ax.relim()
-    #                 # ax.autoscale_view()
-                    
-    #                 # Redraw the plot
-    #                 fig.canvas.draw()
-    #                 fig.canvas.flush_events()
-                    
-    #                 # Optional: pause briefly to see updates
-    #                 plt.pause(0.01)
-            
-                    
-    #     except KeyboardInterrupt:
-    #         print("Visualization stopped.")
-    #         break
-    #     except Exception as e:
-    #         print(f"Error in visualization: {e}")
-    #         break
-    
-    # plt.ioff()  # Turn off interactive mode
-    # plt.show(block=True)  # Keep the final plot open
-
-
-    # while True:
-    #     app = dq.get()
-    #     xs, ys = zip(*app)
-    #     plt.figure()
-    #     plt.plot(xs, ys, linewidth=2)
-    #     plt.scatter(xs[0], ys[0], c='green', label='start')
-    #     plt.scatter(xs[-1], ys[-1], c='red', label='end')
-    #     plt.axis('equal')
-    #     plt.legend()
-    #     plt.show()
 
 if __name__ == "__main__":
-    # train_loop()
+    # start_pos = (50, 50)
+    # for i in range(10):
+    #     x, y = rand_unit_cirlce_pos(start_pos, 20)
+    #     ac_dist = math.hypot(x-50, y-50)
+    #     print(f"({x:.2f}, {y:.2f}) -- Distance: {ac_dist}")
     run_train_and_view_procesess() 

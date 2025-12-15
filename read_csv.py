@@ -104,7 +104,7 @@ class env_sim:
 
         # hit the target
         t_dist = math.hypot(nx - tx, ny - ty)
-        if t_dist < 5.0:
+        if t_dist < 2.0:
             return 100.0, True
         # t delta reward
         prev_t_dist = math.hypot(cx - tx, cy - ty)
@@ -115,7 +115,7 @@ class env_sim:
         for px, py in self.points:
             d = math.hypot(cx - px, cy - py)
             if d < 5.0:
-                crowd_penalty -= 0.1 * (5.0 - d) / 5.0  # linear penalty
+                crowd_penalty -= 1 * (5.0 - d) / 5.0  # linear penalty
         # time penalty
         step_penalty = -0.1
         # return all
