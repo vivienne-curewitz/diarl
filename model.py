@@ -141,7 +141,6 @@ def train_loop(data_queue: Queue):
         if win_rate*100 > 90.0:
             current_start_dist += 1 
             last_n = np.zeros((100,)).tolist()
-        if epoch % 10 == 0:
             torch.save({
                 "policy_state_dict": agent.state_dict(),
                 "value_state_dict": critic.state_dict(),
