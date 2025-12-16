@@ -65,6 +65,7 @@ def train_loop(data_queue: Queue):
     epoch = 0    
     last_n = np.zeros((100,)).tolist() 
     current_start_dist = 3
+    batch_size = 10
     try:
         checkpoint = torch.load("checkpoint.pt")
         agent.load_state_dict(checkpoint["policy_state_dict"])
@@ -73,8 +74,11 @@ def train_loop(data_queue: Queue):
         value_opt.load_state_dict(checkpoint["value_optimizer_state_dict"])
         total_steps = checkpoint["global_step"]
         epoch = checkpoint["epoch"]
+        if "spawn_dist" in checkpoint.keys():
+            current_start_dist = checkpoint["spawn_dist"]
     except Exception as e:
         print(f"Failed to load; restarting training {e}")
+    states, actions, rewards, log_probs, values, entropies = [], [], [], [], [], []
     # epoc init
     while(True):
         total_reward = 0
@@ -89,7 +93,6 @@ def train_loop(data_queue: Queue):
         entropy_coef = 0.01
         max_grad_norm = 0.5
         # buffers
-        states, actions, rewards, log_probs, values, entropies = [], [], [], [], [], []
 
         for i in range(2000):
             #loop
@@ -109,6 +112,8 @@ def train_loop(data_queue: Queue):
             dx, dy = action.detach().numpy()
             # calculate step 
             reward, next_state_vec, complete = rf.step_env((dx, dy))
+            if complete and reward > 0:
+                succeed = True
             # get data for this step
             states.append(state.squeeze(0))
             actions.append(action.squeeze(0))
@@ -119,60 +124,49 @@ def train_loop(data_queue: Queue):
 
             state_vec = next_state_vec
             
+            # do learning for this epoch
+            if i > 0 and i%batch_size == 0:
+                # data fixing
+                states = torch.stack(states)
+                rewards = torch.tensor(rewards, dtype=torch.float32)
+                log_probs = torch.stack(log_probs)
+                values = torch.stack(values).squeeze()
+                entropies = torch.stack(entropies)
+
+                returns = []
+                # Calculate discounted returns (R_t = r_t + gamma * R_{t+1})
+                R = 0.0
+                for r in reversed(rewards):
+                    R = r + gamma * R
+                    returns.insert(0, R)
+                    
+                returns = torch.tensor(returns, dtype=torch.float32)
+                
+                # generate advantage and normalzie
+                advantage = returns - values.detach() # .detach() here is important
+                advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+
+                # Batch policy update
+                # Policy Loss: Maximize returns and entropy (negative sign)
+                policy_loss = - (log_probs * advantage.detach()).mean() - (entropy_coef * entropies.mean())
+                
+                policy_opt.zero_grad()
+                policy_loss.backward()
+                torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=max_grad_norm) # KEEP CLIPPING
+                policy_opt.step()
+                
+                # Value Loss: Minimize mean squared error of the returns vs predicted values
+                value_loss = (returns.detach() - values).pow(2).mean() # Use .mean() over the batch
+                
+                value_opt.zero_grad()
+                value_loss.backward()
+                torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=max_grad_norm) # KEEP CLIPPING
+                value_opt.step()
+                # reset data
+                states, actions, rewards, log_probs, values, entropies = [], [], [], [], [], []
+
             if complete:
                 break
-
-        # do learning for this epoch
-        # data fixing
-        states = torch.stack(states)
-        rewards = torch.tensor(rewards, dtype=torch.float32)
-        log_probs = torch.stack(log_probs)
-        values = torch.stack(values).squeeze()
-        entropies = torch.stack(entropies)
-
-        # if we took too long
-        if complete:
-            # If the episode ended, the final return is just the final reward/terminal state value
-            # The bootstrap term is 0 if it was a final success/failure.
-            # We will use the last state in the buffer to determine the value of the next state
-            # but this calculation needs to be more robust for full episodes.
-            R = 0.0
-        else:
-            # If max_steps reached, bootstrap the value
-            final_state = torch.tensor(state_vec, dtype=torch.float32).unsqueeze(0)
-            R = critic(final_state).detach().squeeze().item()
-
-        returns = []
-        # Calculate discounted returns (R_t = r_t + gamma * R_{t+1})
-        for r in reversed(rewards):
-            R = r + gamma * R
-            returns.insert(0, R)
-            
-        returns = torch.tensor(returns, dtype=torch.float32)
-        
-        # Generalized Advantage Estimation (GAE) or simple TD-Advantage
-        advantage = returns - values.detach() # .detach() here is important
-
-        # --- RE-ENABLE Advantage Normalization Safely ---
-        # Now that advantage is a batch of N values, this works perfectly!
-        advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
-
-        # Batch policy update
-        # Policy Loss: Maximize returns and entropy (negative sign)
-        policy_loss = - (log_probs * advantage.detach()).mean() - (entropy_coef * entropies.mean())
-        
-        policy_opt.zero_grad()
-        policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=max_grad_norm) # KEEP CLIPPING
-        policy_opt.step()
-        
-        # Value Loss: Minimize mean squared error of the returns vs predicted values
-        value_loss = (returns.detach() - values).pow(2).mean() # Use .mean() over the batch
-        
-        value_opt.zero_grad()
-        value_loss.backward()
-        torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=max_grad_norm) # KEEP CLIPPING
-        value_opt.step()
 
         rt = perf_counter() - start
         total_steps += i
@@ -181,11 +175,11 @@ def train_loop(data_queue: Queue):
             last_n[epoch%100] = 1
         else:
             last_n[epoch%100] = 0
-        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s Win Rate {sum(last_n)}% Spawn Distance {current_start_dist}")
+        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s Win Rate {sum(last_n)}% Spawn Distance {current_start_dist:.3f}")
         data_queue.put((rf.all_previous_positions, (tx, ty)))
         win_rate = sum(last_n)/100
         if win_rate*100 > 90.0:
-            current_start_dist += 1 
+            current_start_dist *= 1.1 
             last_n = np.zeros((100,)).tolist()
             torch.save({
                 "policy_state_dict": agent.state_dict(),
@@ -193,7 +187,8 @@ def train_loop(data_queue: Queue):
                 "policy_optimizer_state_dict": policy_opt.state_dict(),
                 "value_optimizer_state_dict": value_opt.state_dict(),
                 "global_step": total_steps,
-                "epoch": epoch
+                "epoch": epoch,
+                "spawn_dist": current_start_dist
             }, "checkpoint.pt")
         epoch += 1        
 
