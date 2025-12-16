@@ -56,14 +56,15 @@ def rand_unit_cirlce_pos(coords, distance):
     return (sx, sy)
 
 
-def train_loop(data_queue: Queue):
+def train_loop(data_queue: Queue, curriculum=1):
+    wr_size = 200
     agent = RLPolicy()
     critic = RLValue()
     policy_opt = torch.optim.Adam(agent.parameters(), lr=1e-4)
     value_opt = torch.optim.Adam(critic.parameters(), lr=1e-3)
     total_steps = 0
     epoch = 0    
-    last_n = np.zeros((100,)).tolist() 
+    last_n = np.zeros((wr_size,)).tolist() 
     current_start_dist = 3
     batch_size = 10
     try:
@@ -76,16 +77,43 @@ def train_loop(data_queue: Queue):
         epoch = checkpoint["epoch"]
         if "spawn_dist" in checkpoint.keys():
             current_start_dist = checkpoint["spawn_dist"]
+        if current_start_dist * 1.1 > 50:
+            current_start_dist = 10
     except Exception as e:
         print(f"Failed to load; restarting training {e}")
     states, actions, rewards, log_probs, values, entropies = [], [], [], [], [], []
     # epoc init
     while(True):
+        if current_start_dist > 50:
+            print(f"Training Complete -- Success Dist: {current_start_dist*(1/1.1)}")
+            break
         total_reward = 0
         start = perf_counter()
-        tx, ty = (50, 50) # (randint(10, 90), randint(10, 90)) #target position
-        cx, cy = rand_unit_cirlce_pos((tx, ty), current_start_dist) # current position
-        rf = env_sim("../dia-homeworks/project/models/data_uniform_random", (tx, ty), (cx, cy))
+        if curriculum == 1:
+            tx, ty = (50, 50) # (randint(10, 90), randint(10, 90)) #target position
+            cx, cy = rand_unit_cirlce_pos((tx, ty), current_start_dist) # current position
+        elif curriculum == 2:
+            tx, ty = (randint(10, 90), randint(10, 90))
+            cx, cy = (randint(10, 90), randint(10, 90))
+        elif curriculum == 3:
+            tx, ty = (50, 50) # (randint(10, 90), randint(10, 90)) #target position
+            current_start_dist = 45
+            # cx, cy = (10, 65)
+            cx, cy = rand_unit_cirlce_pos((tx, ty), current_start_dist) # current position
+        if curriculum == 1 or curriculum == 2:
+            folders = [
+                "data",
+                "data_uniform_random"
+            ]
+        elif curriculum == 3:
+            folders = [
+                "data_circle",
+                "data_diagonal",
+                "data_uniform_random",
+                "data_rectangle",
+            ]
+        fr = folders[randint(0, len(folders)-1)]
+        rf = env_sim(f"../dia-homeworks/project/models/{fr}", (tx, ty), (cx, cy))
         state_vec = rf.get_env() 
         succeed = False
         sigma = 0.05
@@ -172,15 +200,15 @@ def train_loop(data_queue: Queue):
         total_steps += i
         cx, cy = rf.cpos
         if succeed:
-            last_n[epoch%100] = 1
+            last_n[epoch%wr_size] = 1
         else:
-            last_n[epoch%100] = 0
-        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s Win Rate {sum(last_n)}% Spawn Distance {current_start_dist:.3f}")
+            last_n[epoch%wr_size] = 0
+        print(f"TS: {total_steps} -- Epoch: {epoch} -- Average Reward: {total_reward/(i+1e-8):.4f} -- Runtime: {rt:.2f}s Win Rate {100*sum(last_n)/wr_size}% Spawn Distance {current_start_dist:.3f}")
         data_queue.put((rf.all_previous_positions, (tx, ty)))
-        win_rate = sum(last_n)/100
+        win_rate = sum(last_n)/wr_size
         if win_rate*100 > 90.0:
             current_start_dist *= 1.1 
-            last_n = np.zeros((100,)).tolist()
+            last_n = np.zeros((wr_size,)).tolist()
             torch.save({
                 "policy_state_dict": agent.state_dict(),
                 "value_state_dict": critic.state_dict(),
@@ -195,7 +223,7 @@ def train_loop(data_queue: Queue):
 
 def run_train_and_view_procesess():
     dq = Queue()
-    tp = Process(target=train_loop, args=(dq,), daemon=True)
+    tp = Process(target=train_loop, args=(dq,3), daemon=True)
     tp.start()
 
 

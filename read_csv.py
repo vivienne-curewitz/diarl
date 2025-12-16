@@ -115,7 +115,7 @@ class env_sim:
         for px, py in self.points:
             d = math.hypot(cx - px, cy - py)
             if d < 2.0: # covid rules
-                crowd_penalty -= 0.01 * (2.0 - d) / 2.0  # linear penalty
+                crowd_penalty -= 1 * (2.0 - d) / 2.0  # linear penalty
         # time penalty
         step_penalty = -0.01
         # return all
