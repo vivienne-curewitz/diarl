@@ -65,7 +65,7 @@ class env_sim:
         return hm
 
     def get_env(self, step=False):
-        hm = self.next(step=step).flatten()
+        hm = np.zeros((121,)).flatten() #self.next(step=step).flatten()
         self.all_previous_positions.append((self.cpos[0], self.cpos[1]))
         tx, ty = self.tpos
         cx, cy = self.cpos
@@ -81,7 +81,7 @@ class env_sim:
         dup = (self.height - cy)/self.height
         ddown = cy/self.height
         px, py = self.prev_action
-        state_vec = [dx, dy, d, dleft, dright, dup, ddown, px, py]
+        state_vec = [dx, dy, d_pow, dleft, dright, dup, ddown, px, py]
         state_vec.extend(hm)
         return state_vec 
 
@@ -100,12 +100,12 @@ class env_sim:
 
         # boundary
         if cx < 0 or cy < 0 or cx > 100 or cy > 100:
-            return -150.0, True 
+            return -10000.0, True 
 
         # hit the target
         t_dist = math.hypot(nx - tx, ny - ty)
         if t_dist < 2.0:
-            return 100.0, True
+            return 300.0, True
         # t delta reward
         prev_t_dist = math.hypot(cx - tx, cy - ty)
         tdr = -1*(t_dist - prev_t_dist)
@@ -114,10 +114,10 @@ class env_sim:
         crowd_penalty = 0.0
         for px, py in self.points:
             d = math.hypot(cx - px, cy - py)
-            if d < 5.0:
-                crowd_penalty -= 1 * (5.0 - d) / 5.0  # linear penalty
+            if d < 2.0: # covid rules
+                crowd_penalty -= 0.01 * (2.0 - d) / 2.0  # linear penalty
         # time penalty
-        step_penalty = -0.1
+        step_penalty = -0.01
         # return all
         reward = tdr + crowd_penalty + step_penalty
         return reward, False

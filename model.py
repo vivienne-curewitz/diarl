@@ -64,7 +64,7 @@ def train_loop(data_queue: Queue):
     total_steps = 0
     epoch = 0    
     last_n = np.zeros((100,)).tolist() 
-    current_start_dist = 5
+    current_start_dist = 15
     try:
         checkpoint = torch.load("checkpoint.pt")
         agent.load_state_dict(checkpoint["policy_state_dict"])
@@ -85,7 +85,7 @@ def train_loop(data_queue: Queue):
         state_vec = rf.get_env() 
         succeed = False
         sigma = 0.05
-        gamma = 0.001
+        gamma = 0.99
         for i in range(2000):
             #loop
             state = torch.tensor(state_vec, dtype=torch.float32)
@@ -99,27 +99,31 @@ def train_loop(data_queue: Queue):
             action = dist.sample()
             action = F.normalize(action, dim=-1)
             log_prob = dist.log_prob(action).sum()
+            entropy = dist.entropy().sum() # <--- NEW: Calculate entropy
 
             dx, dy = action.detach().numpy()
 
             # Apply action in environment
             reward, next_state, complete = rf.step_env((dx, dy))
             total_reward += reward
-            if complete:
-                if reward > 0:
-                    succeed = True
-                break
+            if complete and reward > 0:
+                succeed = True
             state_vec = next_state
             reward = torch.tensor(reward, dtype=torch.float32)
             value = critic(state)
             next_value = critic(torch.tensor(next_state, dtype=torch.float32)).detach()
 
             advantage = reward + gamma * next_value - value
+            # normalize advantage per gemini recommendation
+            # advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
             # --- Policy update ---
-            policy_loss = -log_prob * advantage.detach()
+            entropy_coef = 0.01
+            policy_loss = -log_prob * advantage.detach() - (entropy_coef * entropy)
             policy_opt.zero_grad()
             policy_loss.backward()
+            # gemini recommended addition
+            torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=0.5)
             policy_opt.step()
 
             # --- Value update ---
@@ -127,6 +131,9 @@ def train_loop(data_queue: Queue):
             value_opt.zero_grad()
             value_loss.backward()
             value_opt.step()
+            # exit condition
+            if complete:
+                break
 
         rt = perf_counter() - start
         total_steps += i
