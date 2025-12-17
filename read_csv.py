@@ -24,7 +24,8 @@ def load_csv_data(file_path):
         return points
 
 def gama_to_points(gama: str):
-    data = gama.readline().replace("{", "").replace("}", "").split(",")
+    data = gama.replace("{", "").replace("}", "").replace("[", "").replace("]", "").split(",")
+    # print(data)
     points = []
     for i in range(0, len(data)-3, 3):
         points.append((float(data[i]), float(data[i+1])))
@@ -39,7 +40,7 @@ def points_to_heatmap(current_position, points):
     min_y = math.floor(py - 5)
     start = perf_counter()
     for p in points:
-        if p[0] >= min_x and p[0] <= min_x+11 and p[1] >= min_y and p[1] <= min_y+11:
+        if p[0] >= min_x and p[0] <= min_x+10 and p[1] >= min_y and p[1] <= min_y+10:
             hx = math.floor(p[0] - min_x)
             hy = math.floor(p[1] - min_y)
             heatmap[hx][hy] += 1
@@ -74,7 +75,8 @@ class env_sim:
         return hm
 
     def get_env(self, step=False):
-        hm = np.zeros((121,)).flatten() #self.next(step=step).flatten()
+        hm = self.next(step=step).flatten()
+        # # hm = np.zeros((121,)).flatten() 
         self.all_previous_positions.append((self.cpos[0], self.cpos[1]))
         tx, ty = self.tpos
         cx, cy = self.cpos
@@ -94,10 +96,11 @@ class env_sim:
         state_vec.extend(hm)
         return state_vec 
 
-    def get_env_one_shot(self, tpos, cpos, points):
-        hm = np.zeros((121,)).flatten() #self.next(step=step).flatten()
+    def get_env_one_shot(self, tpos, cpos, gama_str):
+        points = gama_to_points(gama_str)
         tx, ty = tpos
         cx, cy = cpos
+        hm = points_to_heatmap(cpos, points).flatten()
         # dist to target state
         dx, dy = (tx - cx, ty - cy)
         d = math.hypot(dx, dy)

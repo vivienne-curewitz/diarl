@@ -50,7 +50,7 @@ class RLValue(nn.Module):
 
 def load_model():
     agent = RLPolicy()
-    checkpoint = torch.load("checkpoint_golden.pt")
+    checkpoint = torch.load("checkpoint_c2.pt")
     agent.load_state_dict(checkpoint["policy_state_dict"])
     return agent
 
@@ -90,8 +90,12 @@ def train_loop(data_queue: Queue, curriculum=1):
     except Exception as e:
         print(f"Failed to load; restarting training {e}")
     states, actions, rewards, log_probs, values, entropies = [], [], [], [], [], []
+    c3_epochs = 0
     # epoc init
     while(True):
+        if c3_epochs > 2000 and curriculum == 3:
+            break
+        c3_epochs += 1
         if current_start_dist > 50:
             print(f"Training Complete -- Success Dist: {current_start_dist*(1/1.1)}")
             break
@@ -110,7 +114,7 @@ def train_loop(data_queue: Queue, curriculum=1):
             cx, cy = rand_unit_cirlce_pos((tx, ty), current_start_dist) # current position
         if curriculum == 1 or curriculum == 2:
             folders = [
-                "data",
+                "data_diagonal",
                 "data_uniform_random"
             ]
         elif curriculum == 3:

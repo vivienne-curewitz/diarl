@@ -33,7 +33,8 @@ def update_location():
 
 def next_location(tpos, cpos, points):
     state_vec = rf.get_env_one_shot(tpos, cpos, points)
-    state = state = torch.tensor(state_vec, dtype=torch.float32)
+    print(f"Len state vec {len(state_vec)}")
+    state = torch.tensor(state_vec, dtype=torch.float32)
     mu = agent(state)
     dist = torch.distributions.Normal(mu, sigma)
     action = dist.sample()
