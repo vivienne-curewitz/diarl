@@ -48,6 +48,14 @@ class RLValue(nn.Module):
         return self.net(state)
 
 
+def load_model():
+    agent = RLPolicy()
+    checkpoint = torch.load("checkpoint_golden.pt")
+    agent.load_state_dict(checkpoint["policy_state_dict"])
+    return agent
+
+
+
 def rand_unit_cirlce_pos(coords, distance):
     x, y = coords
     theta = random()*2*math.pi

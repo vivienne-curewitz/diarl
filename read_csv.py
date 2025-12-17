@@ -23,6 +23,14 @@ def load_csv_data(file_path):
             points.append((float(data[i]), float(data[i+1])))
         return points
 
+def gama_to_points(gama: str):
+    data = gama.readline().replace("{", "").replace("}", "").split(",")
+    points = []
+    for i in range(0, len(data)-3, 3):
+        points.append((float(data[i]), float(data[i+1])))
+    return points
+
+
 def points_to_heatmap(current_position, points):
     px = current_position[0]
     py = current_position[1]
@@ -42,7 +50,8 @@ def points_to_heatmap(current_position, points):
 class env_sim:
     def __init__(self, dir, tpos, cpos):
         self.dir = dir
-        self.indices = get_data_indices(dir)
+        if dir != "":
+            self.indices = get_data_indices(dir)
         self.step = 0
         self.fname = "pls"
         self.points = []
@@ -69,6 +78,26 @@ class env_sim:
         self.all_previous_positions.append((self.cpos[0], self.cpos[1]))
         tx, ty = self.tpos
         cx, cy = self.cpos
+        # dist to target state
+        dx, dy = (tx - cx, ty - cy)
+        d = math.hypot(dx, dy)
+        d_pow = d/self.max_dist
+        dx /= max(d, 1.0)
+        dy /= max(d, 1.0)
+        # boundary state
+        dleft = cx/self.width
+        dright = (self.width - cx)/self.width
+        dup = (self.height - cy)/self.height
+        ddown = cy/self.height
+        px, py = self.prev_action
+        state_vec = [dx, dy, d_pow, dleft, dright, dup, ddown, px, py]
+        state_vec.extend(hm)
+        return state_vec 
+
+    def get_env_one_shot(self, tpos, cpos, points):
+        hm = np.zeros((121,)).flatten() #self.next(step=step).flatten()
+        tx, ty = tpos
+        cx, cy = cpos
         # dist to target state
         dx, dy = (tx - cx, ty - cy)
         d = math.hypot(dx, dy)
